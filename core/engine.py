@@ -31,43 +31,17 @@ CLIENT_CONFIG = {
     # Pure policy terms (sequential, vitality) are NOT here — they're in
     # pdf_triggers. Application descriptions don't use policy language.
     "search_keywords": [
-        # Primary Class E (Mark's exact terms from JSON)
-        "Class E", "change of use", "use class e",
-        # Retail
-        "shop", "to shop",
-        "retail", "to retail",
-        "supermarket", "to supermarket",
-        "convenience", "to convenience",
-        "food store", "to food store",
-        "discount store",
-        "comparison retail", "to comparison",
-        # Food & Drink
-        "café", "cafe", "to café", "to cafe",
-        "restaurant", "to restaurant",
-        "hot food", "to hot food",
-        "takeaway", "to takeaway",
-        "coffee shop",
-        "food and drink",
-        "drive-through", "drive through",
-        # Leisure / Health / Personal Services
-        "gym", "to gym",
-        "fitness",
-        "hair", "beauty", "nail", "barber",
-        "health centre",
-        "clinic", "to clinic",
-        "pharmacy", "to pharmacy",
-        "optician",
-        # Other Class E
-        "office", "to office",
-        "workspace",
-        # Sui Generis (Mark's JSON includes these)
-        "sui generis",
-        "betting",
-        "amusement",
-        "car wash",
-        "mixed use",
+        # 23 high-signal keywords (from maplanning.json, deduplicated)
+        # Idox search is case/accent insensitive — 'cafe' = 'café'
+        # Removed noisy redundant pairs and policy terms (not in descriptions)
+        "Class E", "change of use",
+        "retail", "supermarket", "convenience store", "food store", "discount store",
+        "comparison retail",
+        "cafe", "restaurant", "hot food", "takeaway", "drive-through", "food and drink",
+        "gym", "health centre", "pharmacy", "clinic",
+        "office", "workspace",
+        "sui generis", "betting", "amusement",
     ],
-
     
 
     "pdf_triggers": [
@@ -147,7 +121,7 @@ CLIENT_TYPE     = CLIENT_CONFIG.get("client_type", "retail")
 #   python engine_ma.py --weeks 2              (default: find refusals, 2-week window)
 #   python engine_ma.py --weeks 4 --mode both  (refusals + competitor alerts)
 #   python engine_ma.py --mode applications    (only competitor alerts)
-parser = argparse.ArgumentParser(description="MAPlanning Retail Lead Engine v26")
+parser = argparse.ArgumentParser(description="MAPlanning Retail Lead Engine v27")
 parser.add_argument("--weeks", type=int, default=2,
                     help="Weeks of applications to scan (default 2)")
 parser.add_argument("--mode",  type=str, default="decisions",
@@ -480,7 +454,7 @@ def log(msg, i=0):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {'  '*i}{msg}", flush=True)
 
 _ENGINE_START      = datetime.now()
-_MAX_RUNTIME_HOURS = float(os.environ.get("MAX_RUNTIME_HOURS", "5.5"))
+_MAX_RUNTIME_HOURS = float(os.environ.get("MAX_RUNTIME_HOURS", "4.8"))
 
 def time_ok(need_s: int = 120) -> bool:
     """True if we have at least need_s seconds of budget remaining."""
@@ -591,7 +565,7 @@ def preflight_check(councils):
                 sess = new_session()
                 if extra_headers:
                     sess.headers.update(extra_headers)
-                r = sess.get(test_url, timeout=15, allow_redirects=True, verify=False)
+                r = sess.get(test_url, timeout=8, allow_redirects=True, verify=False)
                 if r.status_code == 200:
                     soup = BeautifulSoup(r.text, "html.parser")
                     text_lower = r.text.lower()
@@ -644,8 +618,15 @@ def preflight_check(councils):
                 dead[name] = reason
                 log(f"  ❌ {name:25s} {reason} — skipping")
 
-    # Include geo_blocked in the live set — scrape_council will skip gracefully if still blocked
-    combined_live = {**dict(sorted(live.items())), **dict(sorted(geo_blocked.items()))}
+    # Skip geo-blocked by default (GitHub US IPs) — each wastes ~25s at warmup.
+    # Set INCLUDE_GEO_BLOCKED=true for Colab/UK-IP runs.
+    _inc_geo = os.environ.get("INCLUDE_GEO_BLOCKED","").lower() in ("1","true","yes")
+    if _inc_geo:
+        combined_live = {**dict(sorted(live.items())), **dict(sorted(geo_blocked.items()))}
+        log(f"  ℹ️  INCLUDE_GEO_BLOCKED=true — {len(geo_blocked)} geo-blocked councils included")
+    else:
+        combined_live = dict(sorted(live.items()))
+        log(f"  ℹ️  Skipping {len(geo_blocked)} geo-blocked councils (set INCLUDE_GEO_BLOCKED=true for Colab)")
 
     log(f"\n  ✅ {len(live):3d} directly reachable")
     log(f"  🌍 {len(geo_blocked):3d} geo-blocked from this IP (included, try Colab for these)")
@@ -1812,7 +1793,7 @@ def _warmup_portal_session(sess, base_url):
 
     # Step 1 — seed JSESSIONID from portal root
     try:
-        sess.get(root, timeout=12, verify=False, allow_redirects=True)
+        sess.get(root, timeout=6, verify=False, allow_redirects=True)
     except Exception:
         pass  # best-effort; the JSESSIONID may still come from step 2
 
@@ -1820,7 +1801,7 @@ def _warmup_portal_session(sess, base_url):
 
     # Step 2 — load search page
     search_url = f"{base_url}/search.do?action=advanced&searchType=Application"
-    r = safe_get(sess, search_url, timeout=18)
+    r = safe_get(sess, search_url, timeout=12)
     if not r or r.status_code != 200:
         return False
 
@@ -1828,7 +1809,7 @@ def _warmup_portal_session(sess, base_url):
     if _is_disclaimer_page(r.text):
         log(f"  📋 Session warmup: disclaimer gate — accepting", 1)
         _accept_disclaimer(sess, base_url, r.text, r.url)
-        time.sleep(0.8)
+        time.sleep(0.3)
         # Step 4 — re-fetch search page to confirm acceptance
         r2 = safe_get(sess, search_url, timeout=18)
         # After disclaimer POST, the server sends us to /advancedSearchResults.do
@@ -1980,7 +1961,7 @@ def _do_post(sess, base_url, keyword, date_from, date_to, with_refused=True):
     """
     search_url = f"{base_url}/search.do?action=advanced&searchType=Application"
 
-    r = safe_get(sess, search_url, timeout=25)
+    r = safe_get(sess, search_url, timeout=15)
     if not r or r.status_code != 200:
         log(f"  ❌ Search page HTTP {r.status_code if r else 'no response'}", 1)
         return [], None
@@ -1994,7 +1975,7 @@ def _do_post(sess, base_url, keyword, date_from, date_to, with_refused=True):
         log(f"  📋 Disclaimer gate — accepting automatically", 1)
         ok = _accept_disclaimer(sess, base_url, r.text, r.url)
         if ok:
-            time.sleep(1.5)
+            time.sleep(0.5)
             r = safe_get(sess, search_url, timeout=25)
             if r and r.status_code == 200 and not _is_disclaimer_page(r.text):
                 _disclaimer_blocked.pop(_host_key, None)  # cleared OK
@@ -2038,7 +2019,7 @@ def _do_post(sess, base_url, keyword, date_from, date_to, with_refused=True):
                 "Origin":       _origin,
                 "Content-Type": "application/x-www-form-urlencoded",
             },
-            timeout=30, allow_redirects=True,
+            timeout=20, allow_redirects=True,
         )
         log(f"  POST → HTTP {pr.status_code}", 1)
         if pr.status_code == 429:
@@ -2079,7 +2060,7 @@ def _do_post(sess, base_url, keyword, date_from, date_to, with_refused=True):
                             "Origin":       _origin,
                             "Content-Type": "application/x-www-form-urlencoded",
                         },
-                        timeout=30, allow_redirects=True,
+                        timeout=20, allow_redirects=True,
                     )
                     log(f"  POST retry → HTTP {pr.status_code}", 1)
                     if pr.status_code == 403:
@@ -2093,7 +2074,7 @@ def _do_post(sess, base_url, keyword, date_from, date_to, with_refused=True):
             log(f"  ❌ Could not re-warm session — skipping this keyword", 1)
             return [], None
 
-    time.sleep(2)  # give server time to store session
+    time.sleep(0.3)  # brief pause after POST
 
     # Some portals redirect the POST straight to results — check first
     # Use title detection (case-insensitive) not URL pattern — Bradford uses lowercase "results"
@@ -2176,7 +2157,7 @@ def search_one_keyword(sess, base_url, keyword, date_from, date_to):
     # The PDF scanner already filters for refusal trigger words, so this is safe.
     if form is not None:
         log(f"  ⚠️  0 results with decision filter — retrying without it", 1)
-        time.sleep(2)
+        time.sleep(0.5)
         # Need a fresh session cookie (JSESSIONID) for new search
         items2, _ = _do_post(sess, base_url, keyword, date_from, date_to, with_refused=False)
         if items2:
@@ -2599,7 +2580,7 @@ def _resolve_viewdoc(sess, url, base_url, soup_of_doc_tab=None):
 
     try:
         r = sess.get(url, headers={"Accept": "application/pdf,*/*,text/html"},
-                     timeout=30, allow_redirects=True, verify=False)
+                     timeout=20, allow_redirects=True, verify=False)
 
         # If we got a PDF directly, great
         ct = r.headers.get("Content-Type","").lower()
@@ -3081,7 +3062,7 @@ def scrape_council(council, base_url, date_from, date_to):
                 i["keyword"] = kw
             all_items.extend(new)
             # Longer delay for rate-sensitive councils
-            kw_sleep = SLOW_COUNCILS.get(base_url, SLOW_COUNCILS.get(base_url.rstrip('/'), 1.0))
+            kw_sleep = SLOW_COUNCILS.get(base_url, SLOW_COUNCILS.get(base_url.rstrip('/'), 0.3))
             time.sleep(kw_sleep)
         except Exception as e:
             log(f"  ❌ Keyword '{kw}': {e}")
@@ -3097,10 +3078,9 @@ def scrape_council(council, base_url, date_from, date_to):
     _MAX_W = 3
 
     def _worker(it):
+        # Reuse the already-warmed sess from keyword phase
         try:
-            _ws = new_session()
-            _warmup_portal_session(_ws, base_url)
-            _lead = process_app(_ws, base_url, council, it)
+            _lead = process_app(sess, base_url, council, it)
             if _lead:
                 with _lock: _q_results.append(_lead)
         except Exception as _we:
@@ -3116,7 +3096,7 @@ def scrape_council(council, base_url, date_from, date_to):
         _threads.append(_t)
         time.sleep(0.3)
     for _t in _threads:
-        _t.join(timeout=90)
+        _t.join(timeout=60)
 
     qualified = sorted(_q_results, key=lambda x: x.get("score",0), reverse=True)
 
@@ -3631,13 +3611,19 @@ def run():
     date_from = (today - timedelta(weeks=WEEKS_TO_SCRAPE)).strftime("%d/%m/%Y")
 
     print("=" * 60)
-    print(f"🏗️  MAPlanning Retail Lead Engine v26")
+    print(f"🏗️  MAPlanning Retail Lead Engine v27")
     print(f"📅  {today.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📆  {date_from} → {date_to}  ({WEEKS_TO_SCRAPE} weeks)")
     print(f"🏛️  {len(COUNCILS)} councils configured")
     print(f"🔎  Mode: {RUN_MODE} | Keywords: {len(RETAIL_KEYWORDS)}")
-    print(f"🤖  AI: {'OpenAI ✅' if os.environ.get('OPENAI_API_KEY') else 'Anthropic ✅' if os.environ.get('ANTHROPIC_API_KEY') else '⚠️ No AI key (add OPENAI_API_KEY)'}")
-    print(f"🗺️  Maps: {'Google Places ✅' if os.environ.get('GOOGLE_MAPS_API_KEY') else '⚠️ No GOOGLE_MAPS_API_KEY (competitor check disabled)'}")
+    _oai  = os.environ.get('OPENAI_API_KEY','').strip()
+    _anth = os.environ.get('ANTHROPIC_API_KEY','').strip()
+    _maps = os.environ.get('GOOGLE_MAPS_API_KEY','').strip()
+    print(f"🤖  AI: {'OpenAI ✅ (key:...'+_oai[-4:]+')' if _oai else 'Anthropic ✅ (key:...'+_anth[-4:]+')' if _anth else '⚠️ No AI key — add OPENAI_API_KEY to GitHub secrets AND workflow env'}")
+    print(f"🗺️  Maps: {'Google Places ✅' if _maps else '⚠️ No GOOGLE_MAPS_API_KEY'}")
+    if not _oai and not _anth:
+        print('     Fix: repo Settings→Secrets→Actions→New secret: OPENAI_API_KEY')
+        print('     Then in workflow env: OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}')
     print("=" * 60)
 
     # ── Step 1: connect to Sheets & load existing refs ──────
