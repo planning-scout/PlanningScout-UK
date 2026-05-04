@@ -2,31 +2,29 @@ name: MAPlanning — Weekly Scraper
 
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: "0 6 * * 2"   # Tuesday 06:00 UTC (07:00 UK)
+    - cron: "0 6 * * 4"   # Thursday 06:00 UTC (07:00 UK)
   workflow_dispatch:
     inputs:
       weeks:
-        description: 'Weeks to scrape back (2 = weekly, 12 = full backfill)'
-        required: false
-        default: '2'
+        description: "Weeks to scan (default 2; use 8 for first backfill)"
+        default: "2"
+      include_geo_blocked:
+        description: "Include geo-blocked councils? (true = Colab UK-IP only)"
+        default: "false"
 
 jobs:
   scrape:
+    name: scrape
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        batch: ["1/4", "2/4", "3/4", "4/4"]
-
+    timeout-minutes: 310   # 5h10m — GitHub Actions hard limit is 6h
+ 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+ 
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: pip install -r requirements.txt -q
