@@ -1,0 +1,43 @@
+name: MAPlanning — Weekly Scraper
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      weeks:
+        description: 'Weeks to scrape back (2 = weekly, 12 = full backfill)'
+        required: false
+        default: '2'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: ["1/4", "2/4", "3/4", "4/4"]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run MAPlanning scraper — batch ${{ matrix.batch }}
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GMAIL_FROM:               ${{ secrets.GMAIL_FROM }}
+          GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO_MAPLANNING:      ${{ secrets.GMAIL_TO_MAPLANNING }}
+          SCRAPE_BATCH:             ${{ matrix.batch }}
+        run: |
+          WEEKS=${{ github.event.inputs.weeks || '2' }}
+          python core/engine.py --weeks 2
