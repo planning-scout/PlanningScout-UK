@@ -29,15 +29,20 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run MAPlanning scraper — batch ${{ matrix.batch }}
+        run: pip install -r requirements.txt -q
+ 
+      - name: Run MAPlanning engine
+        run: python core/engine_ma.py --weeks ${{ github.event.inputs.weeks || '2' }} --mode decisions
         env:
-          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GMAIL_FROM:               ${{ secrets.GMAIL_FROM }}
-          GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
-          GMAIL_TO_MAPLANNING:      ${{ secrets.GMAIL_TO_MAPLANNING }}
-          SCRAPE_BATCH:             ${{ matrix.batch }}
-        run: |
-          WEEKS=${{ github.event.inputs.weeks || '2' }}
-          python core/engine.py --weeks 2
+          # ── Google Sheets ─────────────────────────────────────────────
+          GCP_SERVICE_ACCOUNT_JSON:  ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          # ── Email digest ──────────────────────────────────────────────
+          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_FROM:                ${{ secrets.GMAIL_FROM }}
+          GMAIL_TO_MAPLANNING:       ${{ secrets.GMAIL_TO_MAPLANNING }}
+          # ── AI & Maps (add these secrets — see README) ─────────────────
+          OPENAI_API_KEY:            ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_MAPS_API_KEY:       ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          # ── Runtime control ────────────────────────────────────────────
+          MAX_RUNTIME_HOURS:         "4.8"
+          INCLUDE_GEO_BLOCKED:       ${{ github.event.inputs.include_geo_blocked || 'false' }}
